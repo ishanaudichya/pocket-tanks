@@ -3,19 +3,52 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #e6f3ff;
+  --foreground: #2d3748;
+  --primary: #89cff0;
+  --secondary: #ffb6c1;
+  --accent: #ffd1dc;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #1a202c;
+    --foreground: #e2e8f0;
+    --primary: #4a9eca;
+    --secondary: #d48c97;
+    --accent: #c99ea7;
   }
 }
 
 body {
   color: var(--foreground);
   background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+@keyframes terrain {
+  0% { background-position: 0 0; }
+  100% { background-position: 100% 0; }
+}
+
+.heart-pattern {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-image: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 20 20' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M10 3.22l-.61-.6a5.5 5.5 0 0 0-7.78 7.77L10 18.78l8.39-8.4a5.5 5.5 0 0 0-7.78-7.77l-.61.61z' fill='%23df87b8' fill-opacity='0.2'/%3E%3C/svg%3E");
+  background-size: 16px 16px;
+  background-repeat: repeat;
+  animation: terrain 60s linear infinite;
+  z-index: 0;
+}
+
+.floating {
+  animation: float 3s ease-in-out infinite;
 }
