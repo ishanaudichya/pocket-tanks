@@ -3,15 +3,17 @@ import { useEffect, useRef, useState } from 'react';
 import Phaser from 'phaser';
 import { gameConfig } from '../lib/game/config';
 import GameControls from './GameControls';
+import { Socket } from 'socket.io-client';
+import { GameScene } from '../lib/game/scenes/GameScene';
 
 interface GameProps {
   player: 'ishan' | 'sakshi';
-  socket: any;
+  socket: Socket;
 }
 
 export default function Game({ player, socket }: GameProps) {
   const gameRef = useRef<Phaser.Game | null>(null);
-  const gameSceneRef = useRef<any>(null);
+  const gameSceneRef = useRef<GameScene | null>(null);
   const [isMyTurn, setIsMyTurn] = useState(false);
   const [currentTurn, setCurrentTurn] = useState<'ishan' | 'sakshi' | null>(null);
 
@@ -23,7 +25,7 @@ export default function Game({ player, socket }: GameProps) {
       });
 
       gameRef.current.scene.start('GameScene', { socket, player });
-      gameSceneRef.current = gameRef.current.scene.getScene('GameScene');
+      gameSceneRef.current = gameRef.current.scene.getScene('GameScene') as GameScene;
 
       // Listen for turn changes
       socket.on('turn_start', ({ player: currentPlayer }: { player: 'ishan' | 'sakshi' }) => {
@@ -75,6 +77,7 @@ export default function Game({ player, socket }: GameProps) {
           onAngleChange={handleAngleChange}
           onFire={handleFire}
           isMyTurn={isMyTurn}
+          player={player}
         />
       )}
       {/* Show whose turn it is */}

@@ -12,9 +12,11 @@ export class GameScene extends BaseScene {
   // Game state
   private power: number = 50;
   private angle: number = 45;
-  private moveSpeed: number = 2;
+  private moveSpeed: number = 3;
   private projectiles: Projectile[] = [];
+  private projectileOwners: Map<Projectile, 'ishan' | 'sakshi'> = new Map();
   private terrainPolygon!: Phaser.Geom.Polygon;
+  private terrainBodies: Phaser.Physics.Arcade.StaticGroup[] = [];
   private scores = {
     ishan: 0,
     sakshi: 0
@@ -30,13 +32,18 @@ export class GameScene extends BaseScene {
   }
 
   preload() {
-    // Load assets
+    // Create simple colored rectangles for tanks if images don't exist
+    this.load.on('loaderror', () => {
+      console.log('Asset loading failed, using fallback graphics');
+    });
+    
+    // Try to load assets, but handle failure gracefully
     this.load.image('tank-body', '/assets/tank-body.png');
     this.load.image('tank-barrel', '/assets/tank-barrel.png');
   }
 
   create() {
-    // Generate terrain
+    // Generate terrain first
     this.createTerrain();
     
     // Create tanks
@@ -73,11 +80,12 @@ export class GameScene extends BaseScene {
     // Listen for opponent actions
     this.socket.on('opponent_move', (data: { x: number, y: number }) => {
       console.log('Opponent moved to:', data);
-      this.opponentTank.setPosition(data.x, data.y);
+      const terrainHeight = this.getTerrainHeight(data.x);
+      this.opponentTank.setPosition(data.x, terrainHeight - 15);
     });
 
     // Add listener for opponent fire
-    this.socket.on('opponent_fire', (data: any) => {
+    this.socket.on('opponent_fire', (data: { startX: number, startY: number, velocity: { x: number, y: number }, angle: number, power: number, shooter: string }) => {
       console.log('Opponent fired:', data);
       this.handleOpponentFire(data);
     });
@@ -92,7 +100,8 @@ export class GameScene extends BaseScene {
     // Listen for opponent position
     this.socket.on('opponent_position', (data: { x: number, y: number }) => {
       console.log('Received opponent position:', data);
-      this.opponentTank.setPosition(data.x, data.y);
+      const terrainHeight = this.getTerrainHeight(data.x);
+      this.opponentTank.setPosition(data.x, terrainHeight - 15);
     });
   }
 
@@ -119,24 +128,57 @@ export class GameScene extends BaseScene {
 
   private createTerrain() {
     this.terrain = this.add.graphics();
-    this.terrain.lineStyle(2, 0x00ff00);
     
-    // Generate terrain points
+    // Generate more interesting terrain points
     this.terrainPoints = [];
-    const segments = 60;
+    const segments = 80;
+    const baseHeight = 450;
     
     for (let i = 0; i <= segments; i++) {
       const x = (this.game.config.width as number) * (i / segments);
-      const y = 400 + Math.sin(i * 0.2) * 50;
+      // Create more varied terrain with multiple waves and random elements
+      let y = baseHeight;
+      y += Math.sin(i * 0.15) * 60; // Large waves
+      y += Math.sin(i * 0.4) * 30;  // Medium waves
+      y += Math.sin(i * 0.8) * 15;  // Small waves
+      y += (Math.random() - 0.5) * 20; // Random variation
+      
+      // Ensure terrain stays within bounds
+      y = Math.max(300, Math.min(550, y));
+      
       this.terrainPoints.push(x, y);
     }
 
     this.drawTerrain();
+    this.createTerrainCollision();
+  }
+
+  private createTerrainCollision() {
+    // Create collision bodies along the terrain
+    this.terrainBodies = [];
+    const segmentWidth = 20;
+    
+    for (let i = 0; i < this.terrainPoints.length - 2; i += 2) {
+      const x1 = this.terrainPoints[i];
+      const y1 = this.terrainPoints[i + 1];
+      const x2 = this.terrainPoints[i + 2];
+      const y2 = this.terrainPoints[i + 3];
+      
+      // Create collision rectangles along terrain segments
+      const avgX = (x1 + x2) / 2;
+      const avgY = (y1 + y2) / 2;
+      const height = Math.max(10, Math.abs(y2 - y1) + 10);
+      
+      const terrainBody = this.physics.add.staticGroup();
+      const rect = this.add.rectangle(avgX, avgY + height/2, segmentWidth, height, 0x00ff00, 0);
+      terrainBody.add(rect);
+      this.terrainBodies.push(terrainBody);
+    }
   }
 
   private drawTerrain() {
     this.terrain.clear();
-    this.terrain.lineStyle(2, 0x00ff00);
+    this.terrain.lineStyle(3, 0x00ff00);
 
     // Create terrain polygon for collision
     const bottomPoints = [
@@ -146,11 +188,12 @@ export class GameScene extends BaseScene {
     ];
     this.terrainPolygon = new Phaser.Geom.Polygon(bottomPoints);
 
-    // Draw terrain
+    // Draw terrain with smoother curves
     this.terrain.beginPath();
     this.terrain.moveTo(this.terrainPoints[0], this.terrainPoints[1]);
     
-    for (let i = 2; i < this.terrainPoints.length; i += 2) {
+    // Use spline curves for smoother terrain
+    for (let i = 2; i < this.terrainPoints.length - 2; i += 2) {
       this.terrain.lineTo(this.terrainPoints[i], this.terrainPoints[i + 1]);
     }
     
@@ -158,7 +201,7 @@ export class GameScene extends BaseScene {
     this.terrain.lineTo(this.game.config.width as number, this.game.config.height as number);
     this.terrain.lineTo(0, this.game.config.height as number);
     this.terrain.closePath();
-    this.terrain.fillStyle(0x00ff00, 0.3);
+    this.terrain.fillStyle(0x228B22, 0.4);
     this.terrain.fill();
   }
 
@@ -171,19 +214,24 @@ export class GameScene extends BaseScene {
       
       if (distance < radius) {
         // Create a crater effect
-        const deformation = (radius - distance) * 0.5;
+        const deformation = (radius - distance) * 0.7;
         this.terrainPoints[i + 1] += deformation;
       }
     }
 
-    // Redraw terrain
+    // Redraw terrain and recreate collision
     this.drawTerrain();
+    this.createTerrainCollision();
   }
 
   private getTerrainHeight(x: number): number {
+    // Clamp x to valid range
+    x = Math.max(0, Math.min(this.game.config.width as number, x));
+    
     // Find the terrain segment that contains x
     const segmentWidth = (this.game.config.width as number) / (this.terrainPoints.length / 2 - 1);
-    const index = Math.floor(x / segmentWidth) * 2;
+    const segmentIndex = Math.floor(x / segmentWidth);
+    const index = Math.min(segmentIndex * 2, this.terrainPoints.length - 4);
     
     // Get the two points of the segment
     const x1 = this.terrainPoints[index];
@@ -192,34 +240,46 @@ export class GameScene extends BaseScene {
     const y2 = this.terrainPoints[index + 3];
     
     // Interpolate to find the height at x
+    if (x2 === x1) return y1;
     const t = (x - x1) / (x2 - x1);
     return y1 + (y2 - y1) * t;
   }
 
   private createTanks() {
     const startX = this.player === 'ishan' ? 100 : 700;
-    const tankY = this.getTerrainHeight(startX) - 10;
+    const tankY = this.getTerrainHeight(startX) - 15;
     
     // Create my tank
     this.myTank = this.add.container(startX, tankY);
-    const myBody = this.add.rectangle(0, 0, 40, 20, 0x888888);
-    this.barrel = this.add.rectangle(20, -5, 30, 8, 0x666666);
+    const myBody = this.add.rectangle(0, 0, 40, 25, this.player === 'ishan' ? 0x4a9eca : 0xff69b4);
+    this.barrel = this.add.rectangle(this.player === 'sakshi' ? -20 : 20, -5, 35, 6, 0x333333);
     this.myTank.add([myBody, this.barrel]);
     
     // Create opponent tank
     const opponentX = this.player === 'ishan' ? 700 : 100;
-    const opponentY = this.getTerrainHeight(opponentX) - 10;
+    const opponentY = this.getTerrainHeight(opponentX) - 15;
     this.opponentTank = this.add.container(opponentX, opponentY);
-    const opponentBody = this.add.rectangle(0, 0, 40, 20, 0xFF8888);
-    this.opponentBarrel = this.add.rectangle(20, -5, 30, 8, 0xFF6666);
+    const opponentBody = this.add.rectangle(0, 0, 40, 25, this.player === 'ishan' ? 0xff69b4 : 0x4a9eca);
+    this.opponentBarrel = this.add.rectangle(this.player === 'sakshi' ? 20 : -20, -5, 35, 6, 0x333333);
     this.opponentTank.add([opponentBody, this.opponentBarrel]);
     
-    // Add physics
+    // Add physics to tanks
     this.physics.world.enable(this.myTank);
     this.physics.world.enable(this.opponentTank);
     
     const tankBody = this.myTank.body as Phaser.Physics.Arcade.Body;
+    const opponentTankBody = this.opponentTank.body as Phaser.Physics.Arcade.Body;
+    
     tankBody.setCollideWorldBounds(true);
+    tankBody.setSize(40, 25);
+    opponentTankBody.setCollideWorldBounds(true);
+    opponentTankBody.setSize(40, 25);
+    
+    // Set up terrain collision for tanks
+    this.terrainBodies.forEach(terrainBody => {
+      this.physics.add.collider(this.myTank, terrainBody);
+      this.physics.add.collider(this.opponentTank, terrainBody);
+    });
     
     if (this.player === 'sakshi') {
       this.angle = 135;
@@ -229,16 +289,29 @@ export class GameScene extends BaseScene {
 
   private updateBarrelAngle() {
     if (this.barrel) {
-      this.barrel.setAngle(this.player === 'sakshi' ? this.angle - 180 : -this.angle);
+      const angleRad = this.angle * Math.PI / 180;
+      const barrelLength = 35;
+      
+      if (this.player === 'sakshi') {
+        // Left-facing tank
+        this.barrel.setRotation(Math.PI - angleRad);
+        this.barrel.x = -Math.cos(angleRad) * (barrelLength / 2);
+        this.barrel.y = -5 + Math.sin(angleRad) * (barrelLength / 2);
+      } else {
+        // Right-facing tank
+        this.barrel.setRotation(-angleRad);
+        this.barrel.x = Math.cos(angleRad) * (barrelLength / 2);
+        this.barrel.y = -5 - Math.sin(angleRad) * (barrelLength / 2);
+      }
     }
   }
 
-  private moveTank(direction: number) {
+  public moveTank(direction: number) {
     if (!this.isMyTurn) return;
     
     const newX = this.myTank.x + (direction * this.moveSpeed);
-    if (newX > 0 && newX < (this.game.config.width as number)) {
-      const newY = this.getTerrainHeight(newX) - 10;
+    if (newX > 30 && newX < (this.game.config.width as number - 30)) {
+      const newY = this.getTerrainHeight(newX) - 15;
       this.myTank.setPosition(newX, newY);
       this.socket.emit('tank_move', { x: newX, y: newY });
     }
@@ -248,25 +321,38 @@ export class GameScene extends BaseScene {
     console.log('Fire method called, isMyTurn:', this.isMyTurn);
     if (!this.isMyTurn) return;
 
+    // Calculate firing position based on barrel
     const radians = this.angle * Math.PI / 180;
+    const barrelLength = 35;
+    let fireX, fireY;
+    
+    if (this.player === 'sakshi') {
+      fireX = this.myTank.x - Math.cos(radians) * barrelLength;
+      fireY = this.myTank.y - 5 + Math.sin(radians) * barrelLength;
+    } else {
+      fireX = this.myTank.x + Math.cos(radians) * barrelLength;
+      fireY = this.myTank.y - 5 - Math.sin(radians) * barrelLength;
+    }
+    
     const velocity = {
-      x: Math.cos(radians) * (this.power / 50) * (this.player === 'sakshi' ? -1 : 1),
-      y: -Math.sin(radians) * (this.power / 50)
+      x: Math.cos(radians) * (this.power / 30) * (this.player === 'sakshi' ? -1 : 1),
+      y: -Math.sin(radians) * (this.power / 30)
     };
 
     const projectile = new Projectile(
       this,
-      this.myTank.x + (this.player === 'sakshi' ? -20 : 20),
-      this.myTank.y - 5,
+      fireX,
+      fireY,
       velocity
     );
 
     this.projectiles.push(projectile);
+    this.projectileOwners.set(projectile, this.player);
 
     console.log('Emitting fire event');
     this.socket.emit('fire', {
-      startX: this.myTank.x + (this.player === 'sakshi' ? -20 : 20),
-      startY: this.myTank.y - 5,
+      startX: fireX,
+      startY: fireY,
       velocity,
       angle: this.angle,
       power: this.power,
@@ -276,7 +362,7 @@ export class GameScene extends BaseScene {
     this.isMyTurn = false;
   }
 
-  private handleOpponentFire(data: any) {
+  private handleOpponentFire(data: { startX: number, startY: number, velocity: { x: number, y: number }, angle: number, power: number, shooter: string }) {
     const projectile = new Projectile(
       this,
       data.startX,
@@ -284,59 +370,73 @@ export class GameScene extends BaseScene {
       data.velocity
     );
     this.projectiles.push(projectile);
+    this.projectileOwners.set(projectile, data.shooter as 'ishan' | 'sakshi');
   }
 
   update() {
-    // Update projectiles
+    // Update projectiles and check for terrain collisions
     this.projectiles = this.projectiles.filter(projectile => {
-      if (!projectile.update()) return false;
-
-      // Check collision with terrain
-      if (this.terrainPolygon.contains(projectile.x, projectile.y)) {
-        let damage = 10; // Default damage
-        
-        if (projectile.body) {
-          damage = Math.floor(
-            Math.sqrt(
-              Math.pow(projectile.body.velocity.x, 2) + 
-              Math.pow(projectile.body.velocity.y, 2)
-            ) / 50
-          );
-        }
-        
-        // Update score for the player who fired
-        const scoringPlayer = this.player === 'ishan' ? 'ishan' : 'sakshi';
-        this.updateScore(scoringPlayer, damage);
-
-        // Deform terrain
-        this.deformTerrain(projectile.x, projectile.y, 30);
-        projectile.onHit();
+      if (!projectile.active) {
+        this.projectileOwners.delete(projectile);
         return false;
       }
-
-      return true;
+      
+      // Check if projectile hit terrain
+      const terrainHeight = this.getTerrainHeight(projectile.x);
+      if (projectile.y >= terrainHeight - 5) { // Add small buffer
+        // Projectile hit terrain
+        const owner = this.projectileOwners.get(projectile);
+        const damage = Math.floor(Math.random() * 20) + 10;
+        if (owner) {
+          this.updateScore(owner, damage);
+        }
+        this.deformTerrain(projectile.x, projectile.y, 40);
+        projectile.onHit();
+        this.projectileOwners.delete(projectile);
+        return false;
+      }
+      
+      return projectile.update();
     });
 
-    // Keep tank on terrain
+    // Keep tanks properly positioned on terrain
+    const myTerrainY = this.getTerrainHeight(this.myTank.x) - 15;
+    const opponentTerrainY = this.getTerrainHeight(this.opponentTank.x) - 15;
+    
+    // Smoothly adjust tank positions to terrain
+    if (Math.abs(this.myTank.y - myTerrainY) > 2) {
+      this.myTank.y = Phaser.Math.Linear(this.myTank.y, myTerrainY, 0.1);
+    } else {
+      this.myTank.y = myTerrainY;
+    }
+    
+    if (Math.abs(this.opponentTank.y - opponentTerrainY) > 2) {
+      this.opponentTank.y = Phaser.Math.Linear(this.opponentTank.y, opponentTerrainY, 0.1);
+    } else {
+      this.opponentTank.y = opponentTerrainY;
+    }
+
+    // Reset tank velocities to prevent drifting
     const tankBody = this.myTank.body as Phaser.Physics.Arcade.Body;
+    const opponentTankBody = this.opponentTank.body as Phaser.Physics.Arcade.Body;
+    
     if (tankBody) {
-      const terrainY = this.getTerrainHeight(this.myTank.x) - 10;
-      this.myTank.y = terrainY;
-      tankBody.setVelocityY(0);
+      tankBody.setVelocity(0, 0);
+    }
+    if (opponentTankBody) {
+      opponentTankBody.setVelocity(0, 0);
     }
   }
 
   setPower(power: number) {
     if (this.isMyTurn) {
-      this.power = power;
-      // Update barrel angle in case it depends on power
-      this.updateBarrelAngle();
+      this.power = Math.max(10, Math.min(100, power));
     }
   }
 
   setAngle(angle: number) {
     if (this.isMyTurn) {
-      this.angle = angle;
+      this.angle = Math.max(0, Math.min(180, angle));
       this.updateBarrelAngle();
     }
   }
